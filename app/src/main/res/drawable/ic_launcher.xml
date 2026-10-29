@@ -1,0 +1,40 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Rounded Background Badge -->
+    <path
+        android:fillColor="#0D1117"
+        android:pathData="M14,14 h80 a10,10 0 0 1 10,10 v60 a10,10 0 0 1 -10,10 h-80 a10,10 0 0 1 -10,-10 v-60 a10,10 0 0 1 10,-10 Z" />
+    
+    <!-- Outer Glow Ring -->
+    <path
+        android:strokeColor="#FF2A6D"
+        android:strokeWidth="2.5"
+        android:pathData="M14,14 h80 a10,10 0 0 1 10,10 v60 a10,10 0 0 1 -10,10 h-80 a10,10 0 0 1 -10,-10 v-60 a10,10 0 0 1 10,-10 Z" />
+
+    <!-- Antenna Waves -->
+    <path
+        android:strokeColor="#05D9E8"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M34,42 C44,30 64,30 74,42" />
+    <path
+        android:strokeColor="#05D9E8"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M40,49 C47,40 61,40 68,49" />
+
+    <!-- Lightning Bolt / Crash Core -->
+    <path
+        android:fillColor="#FF2A6D"
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="1.2"
+        android:pathData="M56,36 L40,60 L52,60 L48,78 L68,52 L54,52 Z" />
+
+    <!-- Target Crosshairs / Radio Dots -->
+    <path
+        android:fillColor="#05D9E8"
+        android:pathData="M54,84 A3,3 0 1,1 54,84.01 Z" />
+</vector>

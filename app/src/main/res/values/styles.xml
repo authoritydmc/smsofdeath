@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.SmsOfDeath" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@drawable/bg_cyber_gradient</item>
+        <item name="android:statusBarColor">#060911</item>
+        <item name="android:navigationBarColor">#060911</item>
+        <item name="android:textColor">#E2E8F0</item>
+        <item name="android:colorAccent">#FF2A6D</item>
+    </style>
+</resources>
