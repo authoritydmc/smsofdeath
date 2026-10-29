@@ -7,14 +7,33 @@ android {
     compileSdk 35
     defaultConfig {
         applicationId "com.markb.wappushcrash"
-        minSdk 30
-        targetSdk 35
+        minSdk 26
+        targetSdk 34
         versionCode 1
         versionName "1.0"
     }
-    buildTypes {
-        release { minifyEnabled false }
+
+    signingConfigs {
+        release {
+            storeFile file('../rajlabs-release.jks')
+            storePassword 'rajlabs123'
+            keyAlias 'rajlabs'
+            keyPassword 'rajlabs123'
+            v1SigningEnabled true
+            v2SigningEnabled true
+        }
     }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            signingConfig signingConfigs.release
+        }
+        debug {
+            signingConfig signingConfigs.release
+        }
+    }
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
